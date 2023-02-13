@@ -6,7 +6,6 @@ import (
 
 	"compactc/common"
 	"compactc/java"
-	pschema "compactc/schema"
 )
 
 type Lang string
@@ -32,27 +31,12 @@ func IsLangSupported(lang string) bool {
 	return false
 }
 
-func GenerateCompactClasses(lang string, schema string, namespace string) (map[common.ClassAndFileName]string, error) {
-	schemaMap, err := pschema.YAMLToMap([]byte(schema))
-	if err != nil {
-		return nil, err
-	}
-	isValid, schemaErrors, err := pschema.ValidateWithJSONSchema(schemaMap)
-	if err != nil {
-		return nil, err
-	}
-	if !isValid {
-		return nil, fmt.Errorf("Schema is not valid, validation errors:\n%s\n", strings.Join(schemaErrors, "\n"))
-	}
-	sch, err := pschema.ValidateSemantics(schemaMap)
-	if err != nil {
-		return nil, err
-	}
+func GenerateCompactClasses(lang string, schema common.Schema) (map[common.ClassAndFileName]string, error) {
 	// compactSchema name to generated compactSchema
 	classes := make(map[common.ClassAndFileName]string)
 	switch lang {
 	case JAVA:
-		javaClasses := java.Generate(sch, namespace)
+		javaClasses := java.Generate(schema)
 		for jc := range javaClasses {
 			classes[common.ClassAndFileName{
 				FileName:  fmt.Sprintf("%s.java", jc),

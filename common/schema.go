@@ -1,20 +1,21 @@
 package common
 
-import "encoding/json"
-
 type Schema struct {
-	Classes []Class `yaml,json:"classes"`
+	Import    []string `yaml,json:"import"`    // optional
+	Namespace string   `yaml,json:"namespace"` // optional, by default DefaultNamespace
+	Classes   []Class  `yaml,json:"classes"`
 }
 
 type Class struct {
-	Name   string  `yaml,json:"name"`
-	Fields []Field `yaml,json:"fields"`
+	Name      string  `yaml,json:"name"`
+	Fields    []Field `yaml,json:"fields"`
+	Namespace string
 }
 
 type Field struct {
-	Name    string          `yaml,json:"name"`
-	Type    string          `yaml,json:"type"`
-	Default json.RawMessage `yaml,json:"default"` // note this is optional
+	Name     string `yaml,json:"name"`
+	Type     string `yaml,json:"type"`
+	External bool   `yaml,json:"external"` // optional
 }
 
 type ClassAndFileName struct {

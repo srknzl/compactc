@@ -6,10 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/xeipuuv/gojsonschema"
-	"gopkg.in/yaml.v2"
-
 	"compactc/common"
+	"github.com/xeipuuv/gojsonschema"
 )
 
 func ValidateWithJSONSchema(schema map[string]interface{}) (isValid bool, schemaErrors []string, err error) {
@@ -20,50 +18,76 @@ func ValidateWithJSONSchema(schema map[string]interface{}) (isValid bool, schema
 	return validateJSONSchemaString(string(jsonSchemaString))
 }
 
-func YAMLToMap(yamlSchema []byte) (map[string]interface{}, error) {
-	s := make(map[interface{}]interface{})
-	if err := yaml.Unmarshal(yamlSchema, &s); err != nil {
-		return nil, err
+func ProcessSchema(schema common.Schema) error {
+	var err error
+	// From full name (packageName.className) to class
+	classNames := make(map[string]common.Class)
+	// process imports if exists
+	if schema.Import != nil {
+		for _, relativeYamlPath := range schema.Import {
+			if err = processImport(relativeYamlPath, classNames); err != nil {
+				return err
+			}
+		}
 	}
-	// convert map[interface{}]interface{} to map[string]interface{}
-	i := ConvertMapI2MapS(s)
-	schema, ok := i.(map[string]interface{})
-	if !ok {
-		return nil, fmt.Errorf("malformed schema")
+	err = registerClassesAndCheckForDuplicate(schema, classNames)
+	if err != nil {
+		return err
 	}
-	return schema, nil
+	err = checkAllFieldTypesAreValid(schema, classNames)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
-func ValidateSemantics(mapSchema map[string]interface{}) (schema common.Schema, err error) {
-	if err = transcode(mapSchema, &schema); err != nil {
-		return
-	}
-	// detect duplicate classes
-	classNames := make(map[string]common.Class)
+func checkAllFieldTypesAreValid(schema common.Schema, classNames map[string]common.Class) error {
 	for _, c := range schema.Classes {
-		if _, ok := classNames[c.Name]; ok {
-			return common.Schema{}, fmt.Errorf("compact class with name %s already exist", c.Name)
-		}
-		classNames[c.Name] = c
-	}
-	// check all field types are valid
-	for _, c := range schema.Classes {
+		fieldNames := make(map[string]struct{}, len(c.Fields))
 		for _, f := range c.Fields {
-			t := f.Type
-			if strings.HasSuffix(t, "[]") {
+			if _, ok := fieldNames[f.Name]; ok {
+				return fmt.Errorf("validation error: '%s' field is defined more than once in class '%s'", f.Name, c.Name)
+			}
+			typ := f.Type
+			fieldNames[f.Name] = struct{}{}
+			if strings.HasSuffix(typ, "[]") {
 				// if type is an array type, loose the brackets and validate underlying type
-				t = t[:len(t)-2]
+				typ = typ[:len(typ)-2]
 			}
-			if isBuiltInType(t) {
+			if isBuiltInType(typ) {
 				continue
 			}
-			if isCompactName(t, classNames) {
+			// if field is external, we don't need to validate it
+			if f.External {
 				continue
 			}
-			return common.Schema{}, fmt.Errorf("validation error: field type '%s' is not one of the builtin types or not defined", t)
+			// check if type is a class name
+			if isCompactName(typ, classNames) {
+				continue
+			}
+			return fmt.Errorf("validation error: field type '%s' is not one of the builtin types or not defined", typ)
 		}
 	}
-	return
+	return nil
+}
+
+func registerClassesAndCheckForDuplicate(schema common.Schema, classNames map[string]common.Class) error {
+	for _, cls := range schema.Classes {
+		fullName, nameSpace := getClassFullNameAndNamespace(cls.Name, schema.Namespace)
+		if _, ok := classNames[fullName]; ok {
+			return fmt.Errorf("Class defined more than once. Compact class with name %s and namespace %s already exist", cls.Name, nameSpace)
+		}
+		cls.Namespace = nameSpace
+		classNames[fullName] = cls
+	}
+	return nil
+}
+
+func getClassFullNameAndNamespace(className string, namespace string) (string, string) {
+	if namespace == "" {
+		return DefaultNamespace + "." + className, DefaultNamespace
+	}
+	return namespace + "." + className, namespace
 }
 
 func transcode(in, out interface{}) error {
@@ -99,9 +123,9 @@ func isBuiltInType(t string) bool {
 	return false
 }
 
-func isCompactName(t string, compactNames map[string]common.Class) bool {
-	for cn := range compactNames {
-		if t == cn {
+func isCompactName(typ string, compactNames map[string]common.Class) bool {
+	for fullName := range compactNames {
+		if typ == fullName {
 			return true
 		}
 	}
@@ -139,6 +163,16 @@ const validationSchema = `{
   "definitions": {},
   "additionalProperties": false,
   "properties": {
+    "namespace": {
+      "type": "string"
+    },
+    "import": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
     "classes": {
       "type": "array",
       "items": {
@@ -161,21 +195,13 @@ const validationSchema = `{
                   "type": [
                     "string"
                   ]
-                },
-                "default": {
-                  "type": [
-                    "number",
-                    "boolean"
-                  ]
                 }
               },
               "required": [
                 "name",
                 "type"
               ]
-            },
-            "minItems": 0,
-            "uniqueItems": false
+            }
           }
         },
         "required": [

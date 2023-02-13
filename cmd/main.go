@@ -1,10 +1,11 @@
 package main
 
 import (
+	"compactc/schema"
+	"errors"
 	"flag"
 	"fmt"
 	"io/fs"
-	"io/ioutil"
 	"os"
 	"path"
 	"strings"
@@ -14,13 +15,11 @@ import (
 
 // flags
 var (
-	namespace string
-	silent    bool
-	outDir    string
+	silent bool
+	outDir string
 )
 
 func init() {
-	flag.StringVar(&namespace, "namespace", "test", "example: com.hazelcast")
 	flag.BoolVar(&silent, "silent", false, "")
 	flag.StringVar(&outDir, "output-dir", "./generated", "")
 	flag.Usage = func() {
@@ -30,7 +29,7 @@ positional arguments:
   LANGUAGE              Language to generate codecs for. Possible values are [java cpp cs py ts go]
   SCHEMA_FILE_PATH      Root directory for schema files`
 		// nothing to do on err, hence skip
-		_, _ = fmt.Fprintf(os.Stderr, "Usage: %s [-h] [--namespace NAMESPACE] [--silent] [--output-dir OUTPUT_DIRECTORY] LANGUAGE SCHEMA_FILE_PATH\n%s", os.Args[0], exp)
+		_, _ = fmt.Fprintf(os.Stderr, "Usage: %s [-h] [--silent] [--output-dir OUTPUT_DIRECTORY] LANGUAGE SCHEMA_FILE_PATH\n%s", os.Args[0], exp)
 		flag.PrintDefaults()
 	}
 }
@@ -51,17 +50,25 @@ func main() {
 	lang = flag.Arg(0)
 	schemaPath = flag.Arg(1)
 	if !compactc.IsLangSupported(lang) {
-		exitWithErr("Error: Unsupported language, you can provide one of %s", strings.Join(compactc.SupportedLangs, ","))
+		exitWithErr("Error: Unsupported language, you can provide one of %s\n", strings.Join(compactc.SupportedLangs, ","))
 	}
-	// todo check if outdir and schema dir exists and accessible
+	exitIfPathMissingOrInaccesible(outDir)
+	exitIfPathMissingOrInaccesible(schemaPath)
 	// validate schemaErr
-	yamlSchema, err := ioutil.ReadFile(schemaPath)
+	yamlSchema, err := os.ReadFile(schemaPath)
 	if err != nil {
-		exitWithErr("Error: Can not read schema %s", err.Error())
+		exitWithErr("Error: Can not read schema %s\n", err.Error())
 	}
-	classes, err := compactc.GenerateCompactClasses(lang, string(yamlSchema), namespace)
+	sch, err := schema.ParseSchemaText(string(yamlSchema))
+	if err != nil {
+		exitWithErr("Error: Can not parse schema %s\n", err.Error())
+	}
+	classes, err := compactc.GenerateCompactClasses(lang, sch)
+	if err != nil {
+		exitWithErr("Error: Can not generate compact classes %s\n", err.Error())
+	}
 	if err = os.MkdirAll(outDir, fs.ModePerm); err != nil {
-		exitWithErr("Error: Can not write generated source, path %s, err: %s", outDir, err.Error())
+		exitWithErr("Error: Can not write generated source, path %s, err: %s\n", outDir, err.Error())
 	}
 	var accumulateErr strings.Builder
 	for k, v := range classes {
@@ -70,7 +77,7 @@ func main() {
 		}
 	}
 	if err != nil {
-		exitWithErr("Error: Things went wrong while writing genereated source:\n%s", err.Error())
+		exitWithErr("Error: Things went wrong while writing genereated source:\n%s\n", err.Error())
 	}
 	return
 }
@@ -80,4 +87,13 @@ func exitWithErr(format string, a ...any) {
 	_, _ = fmt.Fprintf(os.Stderr, format, a...)
 	flag.Usage()
 	os.Exit(1)
+}
+
+func exitIfPathMissingOrInaccesible(path string) {
+	_, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		exitWithErr("Error: Output directory %s does not exist\n", path)
+	} else if err != nil {
+		exitWithErr("Error: Can not access output directory %s, err: %s\n", path, err.Error())
+	}
 }

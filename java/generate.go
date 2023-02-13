@@ -46,16 +46,6 @@ func arrayOf(fieldType string) string {
 	return fieldType
 }
 
-func defaultValue(field common.Field) string {
-	if len(field.Default) != 0 {
-		return string(field.Default)
-	}
-	if fixedType, ok := common.FixedSizeTypes[field.Type]; ok {
-		return fixedType
-	}
-	return "null"
-}
-
 func methodName(field TypeInfo, compactType string) string {
 	var mn string
 	if field.IsCustomClass {
@@ -164,11 +154,7 @@ func toStringBody(field common.Field) string {
 
 func fields(field common.Field) string {
 	ti := toJavaType(field.Type)
-	var cast string
-	if ti.FullType == "float" {
-		cast = "(float) "
-	}
-	return fmt.Sprintf("    private %s %s = %s%s;", ti.FullType, field.Name, cast, defaultValue(field))
+	return fmt.Sprintf("    private %s %s;", ti.FullType, field.Name)
 }
 
 func read(field common.Field) string {
@@ -176,12 +162,7 @@ func read(field common.Field) string {
 	if ti.IsArr && ti.IsCustomClass {
 		return fmt.Sprintf(`            %s %s = reader.readArrayOfCompact("%s", %s.class);`, ti.FullType, field.Name, field.Name, ti.Type)
 	}
-	var cast string
-	switch ti.FullType {
-	case "byte", "short", "float":
-		cast = fmt.Sprintf("(%s) ", ti.FullType)
-	}
-	return fmt.Sprintf(`            %s %s = reader.read%s("%s", %s%s);`, ti.FullType, field.Name, methodName(ti, field.Type), field.Name, cast, defaultValue(field))
+	return fmt.Sprintf(`            %s %s = reader.read%s("%s");`, ti.FullType, field.Name, methodName(ti, field.Type), field.Name)
 }
 
 func getters(field common.Field) string {
@@ -193,11 +174,11 @@ func getters(field common.Field) string {
 `, ti.FullType, upperName, field.Name)
 }
 
-func Generate(schema common.Schema, namespace string) map[string]string {
+func Generate(schema common.Schema) map[string]string {
 	classes := make(map[string]string)
 	for _, cls := range schema.Classes {
 		var sb strings.Builder
-		err := GenerateClass(cls, namespace, &sb)
+		err := GenerateClass(cls, &sb)
 		if err != nil {
 			fmt.Println(err)
 		}
@@ -206,7 +187,7 @@ func Generate(schema common.Schema, namespace string) map[string]string {
 	return classes
 }
 
-func GenerateClass(cls common.Class, ns string, w io.Writer) error {
+func GenerateClass(cls common.Class, w io.Writer) error {
 	tmpl, err := template.New("main").Funcs(template.FuncMap{
 		"read":              read,
 		"toJavaType":        toJavaType,
@@ -241,10 +222,8 @@ func GenerateClass(cls common.Class, ns string, w io.Writer) error {
 	}
 	err = tmpl.Execute(w, struct {
 		common.Class
-		Namespace string
 	}{
 		cls,
-		ns,
 	})
 	return err
 }

@@ -25,13 +25,11 @@ func TestValidateJSONSchemaString(t *testing.T) {
 		{
 			name:        "valid",
 			schema:      Valid,
-			errString:   "",
 			noSchemaErr: true,
 		},
 		{
 			name:        "valid custom field type defined in schema",
 			schema:      ValidNewFieldTypeDefined,
-			errString:   "",
 			noSchemaErr: true,
 		},
 		{
@@ -113,24 +111,8 @@ func TestValidateSchemaSemantics(t *testing.T) {
 			err:    "not one of the builtin types or not defined",
 		},
 		{
-			name: "valid field type defined in schema",
-			schema: `{
-                  "classes":[
-                     {
-                        "name":"Employee",
-                        "fields":[
-                           {
-                              "name":"age",
-                              "type":"Work"
-                           }
-                        ]
-                     },
-                     {
-                        "name":"Work",
-                        "fields":[]
-                     }
-                  ]
-           }`,
+			name:   "valid field type defined in schema",
+			schema: ValidNewFieldTypeDefined,
 		},
 		{
 			name: "duplicate compact class",
@@ -153,6 +135,50 @@ func TestValidateSchemaSemantics(t *testing.T) {
            }`,
 			isErr: true,
 			err:   "already exist",
+		},
+		{
+			name: "duplicate field name same field type",
+			schema: `{
+                  "classes":[
+                     {
+                        "name":"Employee",
+                        "fields":[
+                           {
+                              "name":"age",
+                              "type":"int8"
+                           },
+                           {
+                              "name":"age",
+                              "type":"int8"
+                           }
+                        ]
+                     }
+                  ]
+           }`,
+			isErr: true,
+			err:   "field is defined more than once in class",
+		},
+		{
+			name: "duplicate field name different field type",
+			schema: `{
+                  "classes":[
+                     {
+                        "name":"Employee",
+                        "fields":[
+                           {
+                              "name":"age",
+                              "type":"int8"
+                           },
+                           {
+                              "name":"age",
+                              "type":"string"
+                           }
+                        ]
+                     }
+                  ]
+           }`,
+			isErr: true,
+			err:   "field is defined more than once in class",
 		},
 		{
 			name: "valid array field type",
@@ -188,15 +214,45 @@ func TestValidateSchemaSemantics(t *testing.T) {
 			isErr: true,
 			err:   "not one of the builtin types or not defined",
 		},
+		{
+			name:   "can import another yaml file and use its class",
+			schema: ImportedFieldType,
+		},
+		{
+			name:   "can import multiple other yaml files and use types with the same class name",
+			schema: MultipleImportedFieldTypeWithSameClassName,
+		},
+		{
+			name:   "Defining a class as external makes it usable even when not imported",
+			schema: ExternalFieldType,
+		},
+		{
+			name:   "defining and importing the same class causes error",
+			schema: SameClassImportedError,
+			isErr:  true,
+			err:    "Class defined more than once",
+		},
+		{
+			name:   "importing and defining the same named and namespaced class causes error",
+			schema: SameNamespaceAndNamedClassImportedError,
+			isErr:  true,
+			err:    "Class defined more than once",
+		},
 	}
+
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			var schema map[string]interface{}
 			require.Nil(t, json.Unmarshal([]byte(tc.schema), &schema))
-			_, err := ValidateSemantics(schema)
+			sch, err := ConvertMapToSchema(schema)
+			require.Nil(t, err)
+			err = ProcessSchema(sch)
 			if !tc.isErr {
 				assert.Nil(t, err)
 				return
+			}
+			if err == nil {
+				t.Fatal("expected error but got none")
 			}
 			assert.Contains(t, err.Error(), tc.err)
 		})
@@ -204,55 +260,134 @@ func TestValidateSchemaSemantics(t *testing.T) {
 }
 
 const (
-	Valid = `{ "classes":[
-                  {
-                     "name":"Employee",
-                     "fields":[
-                        {
-                           "name":"age",
-                           "type":"int32[]"
-                        },
-                        {
-                           "name":"name",
-                           "type":"string"
-                        },
-                        {
-                           "name":"id",
-                           "type":"int64",
-                           "default":1231231
-                        }
-                     ]
-                  }
-               ]
-        }`
+	Valid = `{ 
+      "classes":[
+         {
+            "name":"Employee",
+            "fields":[
+               {
+                  "name":"age",
+                  "type":"int32[]"
+               },
+               {
+                  "name":"name",
+                  "type":"string"
+               },
+               {
+                  "name":"id",
+                  "type":"int64"
+               }
+            ]
+         }
+      ]
+   }`
+	// Field is not defined nor imported nor external
 	InvalidFieldType = `{
-               "classes":[
-                  {
-                     "name":"Employee",
-                     "fields":[
-                        {
-                           "name":"age",
-                           "type":"Work"
-                        }
-                     ]
-                  }
-               ]
-        }`
+      "classes":[
+         {
+            "name":"Employee",
+            "fields":[
+               {
+                  "name":"age",
+                  "type":"Work"
+               }
+            ]
+         }
+      ]
+   }`
+	// Adding external makes this work
+	ExternalFieldType = `{
+      "classes":[
+         {
+            "name":"Employee",
+            "fields":[
+               {
+                  "name":"age",
+                  "type":"Work",
+                  "external":true
+               }
+            ]
+         }
+      ]
+   }`
 	ValidNewFieldTypeDefined = `{
-                  "classes":[
-                     {
-                        "name":"Employee",
-                        "fields":[
-                           {
-                              "name":"age",
-                              "type":"Work"
-                           }
-                        ]
-                     },
-                     {
-                        "name":"Work",
-                        "fields":[]
-                     }
-                  ]
-           }`
+      "classes":[
+         {
+            "name":"Employee",
+            "fields":[
+               {
+                  "name":"age",
+                  "type":"com.example.Work"
+               }
+            ]
+         },
+         {
+            "name":"Work",
+            "fields":[]
+         }
+      ]
+   }`
+	ImportedFieldType = `{
+      "import":["xyz.yaml"], 
+      "classes":[
+         {
+            "name":"Employee",
+            "fields":[
+               {
+                  "name":"age",
+                  "type":"com.xyz.Work"
+               }
+            ]
+         }
+      ]
+   }`
+	MultipleImportedFieldTypeWithSameClassName = `{
+      "import":["xyz.yaml", "zyx.yaml"], 
+      "classes":[
+         {
+            "name":"Employee",
+            "fields":[
+               {
+                  "name":"work",
+                  "type":"com.xyz.Work"
+               },
+               {
+                  "name":"work2",
+                  "type":"com.zyx.Work"
+               }
+            ]
+         }
+      ]
+   }`
+	// In this, imported class and defined class are exactly the same.
+	SameClassImportedError = `{
+      "import":["example.yml"], 
+      "classes":[
+         {
+            "name":"Employee",
+            "fields":[
+               {
+                  "name":"name",
+                  "type":"string"
+               }
+            ]
+         }
+      ]
+   }`
+
+	// In this, the type is different.
+	SameNamespaceAndNamedClassImportedError = `{
+      "import":["example.yml"], 
+      "classes":[
+         {
+            "name":"Employee",
+            "fields":[
+               {
+                  "name":"work",
+                  "type":"string"
+               }
+            ]
+         }
+      ]
+   }`
 )
